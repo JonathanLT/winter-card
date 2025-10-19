@@ -1,0 +1,10 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "winter_card",
+            "database": "${workspaceFolder:winter_card}/winter_card.db"
+        }
+    ]
+}
