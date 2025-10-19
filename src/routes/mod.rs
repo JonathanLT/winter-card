@@ -2,6 +2,7 @@ use rocket::Route;
 
 pub mod index;
 pub mod admin;
+pub mod secret_santa;
 
 pub fn routes() -> Vec<Route> {
     routes![
@@ -16,5 +17,9 @@ pub fn routes() -> Vec<Route> {
         admin::create_access_code,
         admin::toggle_access_code,
         admin::delete_access_code,
+
+        // secret santa
+        secret_santa::secret_santa,
+        secret_santa::perform_draw, // nouvelle route pour le tirage
     ]
 }

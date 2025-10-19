@@ -8,6 +8,18 @@ use rusqlite::params;
 use crate::auth::AuthenticatedUser;
 use crate::state::AppState;
 use crate::models::access_code::AccessCode;
+use crate::models::draw::Draw;
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccessCodeWithDraw {
+    pub id: i64,
+    pub name: String,
+    pub code: String,
+    pub active: bool,
+    pub drawn: bool,
+    pub receiver_id: Option<i64>,
+    pub year: Option<i32>,
+}
 
 #[get("/admin")]
 pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
@@ -35,8 +47,10 @@ pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
                         codeList.innerHTML = codes.map(code => `
                             <tr class="${code.active ? '' : 'inactive'}">
                                 <td>${code.id}</td>
+                                <td>${code.name}</td>
                                 <td>${code.code}</td>
                                 <td>${code.active ? 'Active' : 'Inactive'}</td>
+                                <td>${code.drawn ? 'Yes' : 'No'}</td>
                                 <td>
                                     <button onclick="toggleCode(${code.id})">Toggle</button>
                                     <button onclick="deleteCode(${code.id})">Delete</button>
@@ -54,6 +68,8 @@ pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
                                 'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
+                                id: 0,
+                                name: form.name.value,
                                 code: form.code.value,
                                 active: form.active.checked
                             })
@@ -98,6 +114,9 @@ pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
                 <div class="form-container">
                     <h2>Create New Access Code</h2>
                     <form onsubmit="createCode(event)">
+                        <input type="text" name="name" 
+                               required 
+                               placeholder="Enter access name">
                         <input type="text" name="code" 
                                pattern="^[A-Za-z0-9]{8,}$" 
                                title="Minimum 8 characters, letters and numbers only" 
@@ -114,8 +133,10 @@ pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
                     <thead>
                         <tr>
                             <th>ID</th>
+                            <th>Name</th>
                             <th>Code</th>
                             <th>Status</th>
+                            <th>Made his draw ?</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -133,25 +154,73 @@ pub fn admin_panel(_auth: AuthenticatedUser) -> RawHtml<&'static str> {
 }
 
 #[get("/admin/api/codes")]
-pub fn list_access_codes(_auth: AuthenticatedUser, state: &State<AppState>) -> Result<Json<Vec<AccessCode>>, Status> {
+pub fn list_access_codes(_auth: AuthenticatedUser, state: &State<AppState>) -> Result<Json<Vec<AccessCodeWithDraw>>, Status> {
     let conn = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
-    let mut stmt = conn.prepare("SELECT id, code, active FROM access_codes")
+    let mut stmt_access_codes = conn.prepare("SELECT id, name, code, active FROM access_codes")
         .map_err(|_| Status::InternalServerError)?;
 
-    let codes_iter = stmt.query_map([], |row| {
+    let codes_iter = stmt_access_codes.query_map([], |row| {
         let id: i64 = row.get(0)?;
-        let code: String = row.get(1)?;
+        let name: String = row.get(1)?;
+        let code: String = row.get(2)?;
         // read stored integer and convert to bool
-        let active_int: i64 = row.get(2)?;
+        let active_int: i64 = row.get(3)?;
         Ok(AccessCode {
-            id: Some(id),
+            id: id,
+            name,
             code,
             active: active_int != 0,
         })
     }).map_err(|_| Status::InternalServerError)?;
 
+    let mut stmt_draws = conn.prepare("SELECT id, giver_id, receiver_id, year, created_at FROM draws")
+        .map_err(|_| Status::InternalServerError)?;
+
+    let draws_iter = stmt_draws.query_map([], |row| {
+        let id: i64 = row.get(0)?;
+        let giver_id: i64 = row.get(1)?;
+        let receiver_id: i64 = row.get(2)?;
+        let year: i32 = row.get(3)?;
+        let created_at: String = row.get(4)?;
+        Ok(Draw {
+            id: id,
+            giver_id: giver_id,
+            receiver_id: receiver_id,
+            year: year,
+            created_at: created_at,
+        })
+    }).map_err(|_| Status::InternalServerError)?;
+
+
     let codes: Vec<AccessCode> = codes_iter.filter_map(Result::ok).collect();
-    Ok(Json(codes))
+    let draws: Vec<Draw> = draws_iter.filter_map(Result::ok).collect();
+
+    let codes_with_draws: Vec<AccessCodeWithDraw> = codes.into_iter().map(|code| {
+        let draw_opt = draws.iter().find(|draw| draw.giver_id == code.id);
+        if let Some(draw) = draw_opt {
+            AccessCodeWithDraw {
+                id: code.id,
+                name: code.name,
+                code: code.code,
+                active: code.active,
+                drawn: true,
+                receiver_id: Some(draw.receiver_id),
+                year: Some(draw.year),
+            }
+        } else {
+            AccessCodeWithDraw {
+                id: code.id,
+                name: code.name,
+                code: code.code,
+                active: code.active,
+                drawn: false,
+                receiver_id: None,
+                year: None,
+            }
+        }
+    }).collect();
+
+    Ok(Json(codes_with_draws))
 }
 
 #[post("/admin/api/codes", data = "<code>")]
@@ -159,13 +228,14 @@ pub fn create_access_code(_auth: AuthenticatedUser, code: Json<AccessCode>, stat
     let conn = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
     
     conn.execute(
-        "INSERT INTO access_codes (code, active) VALUES (?1, ?2)",
-        params![code.code, if code.active { 1 } else { 0 }],
+        "INSERT INTO access_codes (name, code, active) VALUES (?1, ?2, ?3)",
+        params![code.name, code.code, if code.active { 1 } else { 0 }],
     ).map_err(|_| Status::InternalServerError)?;
 
     let id = conn.last_insert_rowid();
     let created_code = AccessCode {
-        id: Some(id),
+        id: id,
+        name: code.name.clone(),
         code: code.code.clone(),
         active: code.active,
     };
@@ -220,6 +290,8 @@ mod tests {
         let state = AppState {
             db_pool: pool,
             is_authenticated: Mutex::new(true),
+            current_user: Mutex::new(None),
+            current_access_code: Mutex::new(None),
         };
 
         rocket::build()
@@ -239,7 +311,8 @@ mod tests {
         let rocket = setup_rocket();
         let client = Client::tracked(rocket).expect("valid rocket instance");
         let new_code = AccessCode {
-            id: None,
+            id: 0,
+            name: "Test Code".to_string(),
             code: "TESTCODE".to_string(),
             active: true,
         };
@@ -249,9 +322,10 @@ mod tests {
             .dispatch();
         assert_eq!(response.status(), Status::Created);
         let created_code: AccessCode = response.into_json().expect("valid json");
+        assert_eq!(created_code.name, "Test Code");
         assert_eq!(created_code.code, "TESTCODE");
         assert_eq!(created_code.active, true);
-        assert!(created_code.id.is_some());
+        assert!(created_code.id > 0);
     }
 
     // Test admin route list_access_codes
@@ -260,7 +334,8 @@ mod tests {
         let rocket = setup_rocket();
         let client = Client::tracked(rocket).expect("valid rocket instance");
         let new_code = AccessCode {
-            id: None,
+            id: 0,
+            name: "Test Code".to_string(),
             code: "TESTCODE".to_string(),
             active: true,
         };
@@ -270,9 +345,10 @@ mod tests {
             .dispatch();
         assert_eq!(response.status(), Status::Created);
         let created_code: AccessCode = response.into_json().expect("valid json");
+        assert_eq!(created_code.name, "Test Code");
         assert_eq!(created_code.code, "TESTCODE");
         assert_eq!(created_code.active, true);
-        assert!(created_code.id.is_some());
+        assert!(created_code.id > 0);
         let response = client.get("/admin/api/codes").dispatch();
         assert_eq!(response.status(), Status::Ok);
         let codes: Vec<AccessCode> = response.into_json().expect("valid json");
@@ -285,7 +361,8 @@ mod tests {
         let rocket = setup_rocket();
         let client = Client::tracked(rocket).expect("valid rocket instance");
         let new_code = AccessCode {
-            id: None,
+            id: 0,
+            name: "Test Code".to_string(),
             code: "TESTCODE".to_string(),
             active: true,
         };
@@ -295,14 +372,15 @@ mod tests {
             .dispatch();
         assert_eq!(response.status(), Status::Created);
         let created_code: AccessCode = response.into_json().expect("valid json");
+        assert_eq!(created_code.name, "Test Code");
         assert_eq!(created_code.code, "TESTCODE");
         assert_eq!(created_code.active, true);
-        assert!(created_code.id.is_some());
+        assert!(created_code.id > 0);
         let response = client.get("/admin/api/codes").dispatch();
         assert_eq!(response.status(), Status::Ok);
         let codes: Vec<AccessCode> = response.into_json().expect("valid json");
         assert!(codes.iter().any(|c| c.code == "TESTCODE"));
-        let response = client.patch(format!("/admin/api/codes/{}", created_code.id.unwrap())).dispatch();
+        let response = client.patch(format!("/admin/api/codes/{}", created_code.id)).dispatch();
         assert_eq!(response.status(), Status::NoContent);
         let response = client.get("/admin/api/codes").dispatch();
         assert_eq!(response.status(), Status::Ok);
@@ -317,7 +395,8 @@ mod tests {
         let rocket = setup_rocket();
         let client = Client::tracked(rocket).expect("valid rocket instance");
         let new_code = AccessCode {
-            id: None,
+            id: 0,
+            name: "Test Code".to_string(),
             code: "TESTCODE".to_string(),
             active: true,
         };
@@ -327,14 +406,15 @@ mod tests {
             .dispatch();
         assert_eq!(response.status(), Status::Created);
         let created_code: AccessCode = response.into_json().expect("valid json");
+        assert_eq!(created_code.name, "Test Code");
         assert_eq!(created_code.code, "TESTCODE");
         assert_eq!(created_code.active, true);
-        assert!(created_code.id.is_some());
+        assert!(created_code.id > 0);
         let response = client.get("/admin/api/codes").dispatch();
         assert_eq!(response.status(), Status::Ok);
         let codes: Vec<AccessCode> = response.into_json().expect("valid json");
         assert!(codes.iter().any(|c| c.code == "TESTCODE"));
-        let response = client.delete(format!("/admin/api/codes/{}", created_code.id.unwrap())).dispatch();
+        let response = client.delete(format!("/admin/api/codes/{}", created_code.id)).dispatch();
         assert_eq!(response.status(), Status::NoContent);
         let response = client.get("/admin/api/codes").dispatch();
         assert_eq!(response.status(), Status::Ok);
