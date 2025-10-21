@@ -8,6 +8,7 @@ mod models;
 
 use crate::db::{init_db, init_pool};
 use crate::state::AppState;
+use rocket_dyn_templates::Template;
 
 #[launch]
 fn rocket() -> _ {
@@ -19,4 +20,5 @@ fn rocket() -> _ {
     rocket::build()
         .manage(state)
         .mount("/", routes::routes())
+        .attach(Template::fairing())
 }
