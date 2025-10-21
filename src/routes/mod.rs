@@ -15,7 +15,7 @@ pub fn routes() -> Vec<Route> {
         admin::admin_panel,
         admin::list_access_codes,
         admin::create_access_code,
-        admin::toggle_access_code,
+        admin::update_access_code,
         admin::delete_access_code,
 
         // secret santa
