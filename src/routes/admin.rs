@@ -5,6 +5,7 @@ use rocket::http::Status;
 use rocket::State;
 use rusqlite::params;
 use rocket_dyn_templates::{Template, context};
+use serde_json::json;
 
 use crate::auth::AuthenticatedUser;
 use crate::state::AppState;
@@ -20,6 +21,12 @@ pub struct AccessCodeWithDraw {
     pub drawn: bool,
     pub receiver_id: Option<i64>,
     pub year: Option<i32>,
+}
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CreateAccessCode {
+    pub name: String,
+    pub code: String,
+    pub active: bool,
 }
 
 #[get("/admin")]
@@ -108,7 +115,7 @@ pub fn list_access_codes(_auth: AuthenticatedUser, state: &State<AppState>) -> R
 }
 
 #[post("/admin/api/codes", data = "<code>")]
-pub fn create_access_code(_auth: AuthenticatedUser, code: Json<AccessCode>, state: &State<AppState>) -> Result<Created<Json<AccessCode>>, Status> {
+pub fn create_access_code(_auth: AuthenticatedUser, code: Json<CreateAccessCode>, state: &State<AppState>) -> Result<Created<Json<AccessCode>>, Status> {
     let conn = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
     
     conn.execute(
@@ -127,21 +134,37 @@ pub fn create_access_code(_auth: AuthenticatedUser, code: Json<AccessCode>, stat
     Ok(Created::new("/admin/api/codes").body(Json(created_code)))
 }
 
-#[patch("/admin/api/codes/<id>")]
-pub fn toggle_access_code(_auth: AuthenticatedUser, id: i64, state: &State<AppState>) -> Result<Status, Status> {
+#[patch("/admin/api/codes/<id>", data = "<code>")]
+pub fn update_access_code(
+    _auth: AuthenticatedUser,
+    id: i64,
+    code: Json<AccessCode>,
+    state: &State<AppState>
+) -> Result<Json<serde_json::Value>, Status> {
     let conn = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
     
     let rows_affected = conn.execute(
-        // use CASE to be explicit and portable
-        "UPDATE access_codes SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END WHERE id = ?1",
-        params![id],
+        "UPDATE access_codes SET name = ?1, code = ?2, active = ?3 WHERE id = ?4",
+        params![
+            code.name,
+            code.code,
+            if code.active { 1 } else { 0 },
+            id
+        ],
     ).map_err(|_| Status::InternalServerError)?;
 
     if rows_affected == 0 {
         return Err(Status::NotFound);
     }
 
-    Ok(Status::NoContent)
+    Ok(Json(json!({
+        "status": "success",
+        "message": "Code mis à jour avec succès",
+        "toast": {
+            "type": "success",
+            "message": "Code mis à jour avec succès"
+        }
+    })))
 }
 
 #[delete("/admin/api/codes/<id>")]
@@ -184,7 +207,7 @@ mod tests {
                 admin_panel,
                 list_access_codes,
                 create_access_code,
-                toggle_access_code,
+                update_access_code,
                 delete_access_code,
             ])
     }
@@ -239,38 +262,51 @@ mod tests {
         assert!(codes.iter().any(|c| c.code == "TESTCODE"));
     }
 
-    // Test admin route toggle_access_code
+    // Test admin route update_access_code
     #[test]
-    fn test_toggle_access_code() {
+    fn test_update_access_code() {
         let rocket = setup_rocket();
         let client = Client::tracked(rocket).expect("valid rocket instance");
+        
+        // First create a code
         let new_code = AccessCode {
             id: 0,
             name: "Test Code".to_string(),
             code: "TESTCODE".to_string(),
             active: true,
         };
+        
         let response = client.post("/admin/api/codes")
             .header(ContentType::JSON)
             .body(serde_json::to_string(&new_code).unwrap())
             .dispatch();
-        assert_eq!(response.status(), Status::Created);
+            
         let created_code: AccessCode = response.into_json().expect("valid json");
-        assert_eq!(created_code.name, "Test Code");
-        assert_eq!(created_code.code, "TESTCODE");
-        assert_eq!(created_code.active, true);
-        assert!(created_code.id > 0);
-        let response = client.get("/admin/api/codes").dispatch();
+        
+        // Then update it
+        let update_code = CreateAccessCode {
+            name: "Updated Code".to_string(),
+            code: "UPDATEDCODE".to_string(),
+            active: false,
+        };
+        
+        let response = client.put(format!("/admin/api/codes/{}", created_code.id))
+            .header(ContentType::JSON)
+            .body(serde_json::to_string(&update_code).unwrap())
+            .dispatch();
+            
         assert_eq!(response.status(), Status::Ok);
-        let codes: Vec<AccessCode> = response.into_json().expect("valid json");
-        assert!(codes.iter().any(|c| c.code == "TESTCODE"));
-        let response = client.patch(format!("/admin/api/codes/{}", created_code.id)).dispatch();
-        assert_eq!(response.status(), Status::NoContent);
+        
+        // Verify the update
         let response = client.get("/admin/api/codes").dispatch();
-        assert_eq!(response.status(), Status::Ok);
         let codes: Vec<AccessCode> = response.into_json().expect("valid json");
-        let toggled_code = codes.iter().find(|c| c.code == "TESTCODE").expect("code exists");
-        assert_eq!(toggled_code.active, false);
+        let updated_code = codes.iter()
+            .find(|c| c.id == created_code.id)
+            .expect("code exists");
+            
+        assert_eq!(updated_code.name, "Updated Code");
+        assert_eq!(updated_code.code, "UPDATEDCODE");
+        assert_eq!(updated_code.active, false);
     }
 
     // Test admin route delete_access_code

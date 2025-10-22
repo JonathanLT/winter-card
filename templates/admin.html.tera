@@ -39,7 +39,7 @@
       </div>
       <div class="modal-body">
             <div class="mb-3">
-                <label class="form-label">Nom (optionnel)</label>
+                <label class="form-label">Nom</label>
                 <input type="text" class="form-control" name="name" id="code-name">
             </div>
             <div class="mb-3">
@@ -122,7 +122,7 @@ async function loadCodes() {
                 <td>${c.name ?? ''}</td>
                 <td><code>${c.code}</code></td>
                 <td>
-                    <input type="checkbox" class="form-check-input toggle-active" data-id="${c.id}" ${c.active ? 'checked' : ''}>
+                    <input type="checkbox" class="form-check-input toggle-active" data-id="${c.id}" data-name="${c.name}" data-code="${c.code}" ${c.active ? 'checked' : ''}>
                 </td>
                 <td>
                     <button class="btn btn-sm btn-outline-primary edit-btn" data-id="${c.id}">Modifier</button>
@@ -186,7 +186,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Delegate clicks for edit/delete/toggle
     document.getElementById('codes-tbody').addEventListener('click', async (e) => {
         const el = e.target;
-        const id = el.dataset.id;
+        const id = Number(el.dataset.id);
+        const name = el.dataset.name;
+        const code = el.dataset.code;
         if (el.classList.contains('delete-btn')) {
             if (!confirm('Supprimer ce code ?')) return;
             try {
@@ -215,8 +217,11 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (el.classList.contains('toggle-active')) {
             const active = el.checked;
             try {
-                await updateCode(id, { active });
-                showAlert('État mis à jour');
+                const response = await updateCode(id, { id, name, code, active });
+                const data = await response;
+                if (data.toast) {
+                    showAlert(data.toast.message, data.toast.type);
+                }
                 loadCodes();
             } catch (err) {
                 showAlert(err.message, 'danger');
@@ -227,12 +232,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Edit form submit
     document.getElementById('edit-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const id = document.getElementById('edit-id').value;
+        const id = Number(document.getElementById('edit-id').value);
         const name = document.getElementById('edit-name').value || null;
         const code = document.getElementById('edit-code').value;
         const active = document.getElementById('edit-active').checked;
         try {
-            await updateCode(id, { name, code, active });
+            await updateCode(id, { id, name, code, active });
             showAlert('Modifications enregistrées');
             const modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
             modal.hide();
