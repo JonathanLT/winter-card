@@ -1,0 +1,252 @@
+{% extends "base" %}
+
+{% block title %}Admin - Winter Card{% endblock %}
+
+{% block content %}
+{% if current_access_code and current_access_code.id == 1 %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Administration des access codes</h2>
+    <div>
+        <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createModal">Nouveau code</button>
+    </div>
+</div>
+
+<div id="alert-placeholder"></div>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nom</th>
+            <th>Code</th>
+            <th>Actif</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="codes-tbody">
+        <tr>
+            <td colspan="5" class="text-center">Chargement…</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- Create / Edit Modal -->
+<div class="modal fade" id="createModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="create-form" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Créer un access code</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+      </div>
+      <div class="modal-body">
+            <div class="mb-3">
+                <label class="form-label">Nom</label>
+                <input type="text" class="form-control" name="name" id="code-name">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Code</label>
+                <input type="text" class="form-control" name="code" id="code-value" required>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="code-active" checked>
+                <label class="form-check-label" for="code-active">Actif</label>
+            </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button type="submit" class="btn btn-primary">Créer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Modal (reused) -->
+<div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form id="edit-form" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Modifier l'access code</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+      </div>
+      <div class="modal-body">
+            <input type="hidden" id="edit-id">
+            <div class="mb-3">
+                <label class="form-label">Nom</label>
+                <input type="text" class="form-control" id="edit-name">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Code</label>
+                <input type="text" class="form-control" id="edit-code">
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="edit-active">
+                <label class="form-check-label" for="edit-active">Actif</label>
+            </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function showAlert(message, type = 'success') {
+    const html = `<div class="alert alert-${type} alert-dismissible" role="alert">
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fermer"></button>
+    </div>`;
+    document.getElementById('alert-placeholder').innerHTML = html;
+    setTimeout(() => { document.getElementById('alert-placeholder').innerHTML = ''; }, 5000);
+}
+
+async function loadCodes() {
+    const tbody = document.getElementById('codes-tbody');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center">Chargement…</td></tr>';
+    try {
+        const res = await fetch('/admin/api/codes');
+        if (!res.ok) throw new Error('Erreur lors du chargement');
+        const codes = await res.json();
+        if (!Array.isArray(codes) || codes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Aucun code</td></tr>';
+            return;
+        }
+        tbody.innerHTML = '';
+        for (const c of codes) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${c.id}</td>
+                <td>${c.name ?? ''}</td>
+                <td><code>${c.code}</code></td>
+                <td>
+                    <input type="checkbox" class="form-check-input toggle-active" data-id="${c.id}" data-name="${c.name}" data-code="${c.code}" ${c.active ? 'checked' : ''}>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary edit-btn" data-id="${c.id}">Modifier</button>
+                    <button class="btn btn-sm btn-outline-danger delete-btn" data-id="${c.id}" ${c.id == 1 ? 'disabled' : ''}>Supprimer</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Erreur: ${e.message}</td></tr>`;
+    }
+}
+
+async function createCode(data) {
+    const res = await fetch('/admin/api/codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Erreur lors de la création');
+    return res.json();
+}
+
+async function updateCode(id, data) {
+    const res = await fetch(`/admin/api/codes/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Erreur lors de la mise à jour');
+    return res.json();
+}
+
+async function deleteCode(id) {
+    const res = await fetch(`/admin/api/codes/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Erreur lors de la suppression');
+    return;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadCodes();
+
+    // Create form
+    document.getElementById('create-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('code-name').value || null;
+        const code = document.getElementById('code-value').value;
+        const active = document.getElementById('code-active').checked;
+        try {
+            await createCode({ name, code, active });
+            showAlert('Code créé');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('createModal'));
+            modal.hide();
+            document.getElementById('create-form').reset();
+            loadCodes();
+        } catch (err) {
+            showAlert(err.message, 'danger');
+        }
+    });
+
+    // Delegate clicks for edit/delete/toggle
+    document.getElementById('codes-tbody').addEventListener('click', async (e) => {
+        const el = e.target;
+        const id = Number(el.dataset.id);
+        const name = el.dataset.name;
+        const code = el.dataset.code;
+        if (el.classList.contains('delete-btn')) {
+            if (!confirm('Supprimer ce code ?')) return;
+            try {
+                await deleteCode(id);
+                showAlert('Code supprimé');
+                loadCodes();
+            } catch (err) {
+                showAlert(err.message, 'danger');
+            }
+        } else if (el.classList.contains('edit-btn')) {
+            // fetch single code to populate modal (or use existing row data)
+            try {
+                const res = await fetch(`/admin/api/codes`);
+                const codes = await res.json();
+                const c = codes.find(x => String(x.id) === String(id));
+                if (!c) throw new Error('Code introuvable');
+                document.getElementById('edit-id').value = c.id;
+                document.getElementById('edit-name').value = c.name ?? '';
+                document.getElementById('edit-code').value = c.code ?? '';
+                document.getElementById('edit-active').checked = !!c.active;
+                const editModal = new bootstrap.Modal(document.getElementById('editModal'));
+                editModal.show();
+            } catch (err) {
+                showAlert(err.message, 'danger');
+            }
+        } else if (el.classList.contains('toggle-active')) {
+            const active = el.checked;
+            try {
+                const response = await updateCode(id, { id, name, code, active });
+                const data = await response;
+                if (data.toast) {
+                    showAlert(data.toast.message, data.toast.type);
+                }
+                loadCodes();
+            } catch (err) {
+                showAlert(err.message, 'danger');
+            }
+        }
+    });
+
+    // Edit form submit
+    document.getElementById('edit-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = Number(document.getElementById('edit-id').value);
+        const name = document.getElementById('edit-name').value || null;
+        const code = document.getElementById('edit-code').value;
+        const active = document.getElementById('edit-active').checked;
+        try {
+            await updateCode(id, { id, name, code, active });
+            showAlert('Modifications enregistrées');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+            modal.hide();
+            loadCodes();
+        } catch (err) {
+            showAlert(err.message, 'danger');
+        }
+    });
+});
+</script>
+{% endblock %}
