@@ -7,9 +7,10 @@ use chrono::Datelike;
 
 use crate::auth::AuthenticatedUser;
 use crate::state::AppState;
+use rocket_dyn_templates::{Template, context};
 
 #[get("/secret_santa")]
-pub fn secret_santa(_auth: AuthenticatedUser, state: &State<AppState>) -> RawHtml<String> {
+pub fn secret_santa(_auth: AuthenticatedUser, state: &State<AppState>) -> Template {
     // récupérer id connecté (optionnel)
     let user_id_val = state.current_access_code.lock().unwrap().as_ref().unwrap().id;
     println!("User ID connecté: {}", user_id_val);
@@ -24,97 +25,31 @@ pub fn secret_santa(_auth: AuthenticatedUser, state: &State<AppState>) -> RawHtm
     ).unwrap_or(0) > 0;
     let draw_button_state = if already_drawn { "disabled" } else { "" };
 
-    RawHtml(format!(r#"
-        <!DOCTYPE html>
-        <html lang="fr">
-        <head>
-            <meta charset="utf-8" />
-            <meta name="viewport" content="width=device-width,initial-scale=1" />
-            <title>Secret Santa - Winter Card</title>
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:#f7fafc; color:#222; margin:0; padding:24px; }}
-                .container {{ max-width:900px; margin:0 auto; background:#fff; padding:28px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.06); }}
-                h1 {{ color:#b22222; margin-top:0; }}
-                .nav {{ margin-bottom:16px; }}
-                .nav a {{ margin-right:12px; color:#b22222; text-decoration:none; }}
-                .note {{ margin-top:18px; background:#fff7e6; padding:12px; border-left:4px solid #ffd580; border-radius:4px; }}
-                button {{ background:#b22222; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }}
-                button:disabled {{ opacity:0.5; cursor:default; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="nav">
-                    <a href="/">Accueil</a>
-                    <a href="/admin">Admin</a>
-                </div>
 
-                <h1>🎅 Secret Santa</h1>
+    // Récupérer le nom du destinataire assigné (si déjà tiré)
+    let receiver_name = if already_drawn {
+        conn.query_row(
+            "
+            SELECT access_codes.name
+            FROM draws
+            INNER JOIN access_codes ON draws.receiver_id = access_codes.id
+            WHERE draws.giver_id = ?1 AND draws.year = ?2
+            ",
+            params![user_id_val, current_year],
+            |row| row.get::<_, String>(0),
+        ).unwrap_or("Inconnu".to_string())
+    } else {
+        "Inconnu".to_string()
+    };
 
-                <p>
-                    Le <strong>Secret Santa</strong> (ou « Père Noël secret » en français) est un jeu ou une tradition populaire pendant la période de Noël,
-                    souvent organisé entre amis, collègues ou membres d’une famille. Voici le <strong>principe</strong> :
-                </p>
-
-                <ol>
-                    <li><strong>🎁 Tirage au sort anonyme</strong>
-                        <ul>
-                            <li>Chaque participant tire au hasard le nom d’une autre personne du groupe.</li>
-                            <li>Il devient alors le « Secret Santa » (le Père Noël secret) de cette personne.</li>
-                            <li>L’identité de celui qui offre le cadeau reste <strong>secrète</strong> jusqu’à la fin.</li>
-                        </ul>
-                    </li>
-                    <li><strong>💡 Budget fixé à l’avance</strong>
-                        <ul><li>Le groupe s’accorde sur un <strong>montant maximum</strong> pour que les cadeaux soient équitables.</li></ul>
-                    </li>
-                    <li><strong>🎀 Achat et échange des cadeaux</strong>
-                        <ul><li>Chacun achète un petit cadeau pour la personne tirée au sort.</li></ul>
-                    </li>
-                    <li><strong>🤫 Option : garder le secret ou le révéler</strong>
-                        <ul><li>Parfois on garde le secret, parfois on révèle à la fin.</li></ul>
-                    </li>
-                </ol>
-
-                <div class="note">
-                    👉 Le but principal est de <strong>partager un moment amusant et chaleureux</strong> sans que chacun ait à acheter pour tout le monde.
-                </div>
-
-                <div style="margin-top:20px;">
-                    <!-- bouton de tirage : contient l'id utilisateur connecté -->
-                    <button id="drawBtn" {draw_button_state} data-user-id="{user_id}">Tirer au sort</button>
-                    <span id="drawResult" style="margin-left:12px;"></span>
-                </div>
-            </div>
-
-            <script>
-                async function draw() {{
-                    const btn = document.getElementById('drawBtn');
-                    const userId = btn.getAttribute('data-user-id');
-                    if (!userId) {{
-                        alert('ID utilisateur non disponible.');
-                        return;
-                    }}
-                    console.log('ID utilisateur :', Number(userId));
-                    btn.disabled = true;
-                    const res = await fetch('/secret_santa/api/draw', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ user_id: Number(userId) }})
-                    }});
-                    if (!res.ok) {{
-                        const text = await res.text();
-                        document.getElementById('drawResult').textContent = 'Erreur: ' + res.status + ' ' + text;
-                        return;
-                    }}
-                    const json = await res.json();
-                    document.getElementById('drawResult').textContent = 'Vous devez offrir à : ' + json.assigned_name + ' (id=' + json.assigned_id + ')';
-                }}
-
-                document.getElementById('drawBtn').addEventListener('click', draw);
-            </script>
-        </body>
-        </html>
-    "#, user_id = user_id_val))
+    // Render the `secret_santa` template
+    Template::render("secret_santa", context! {
+        is_authenticated: true,
+        user_id: user_id_val,
+        draw_button_state,
+        hidden_draw: if already_drawn { "" } else { "hidden" },
+        receiver_name,
+    })
 }
 
 #[derive(Deserialize)]

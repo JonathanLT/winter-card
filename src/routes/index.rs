@@ -17,8 +17,24 @@ pub fn index(state: &State<AppState>) -> Template {
     let is_authenticated = *state.is_authenticated.lock().unwrap();
     
     if is_authenticated {
+        let conn: r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager> = state.db_pool.get().expect("db connection");
+        let user_id = state.current_access_code.lock().unwrap().as_ref().unwrap().id;
+        let access_code_res = conn.query_row(
+            "SELECT * FROM access_codes WHERE id = ?1 AND active = 1",
+            params![user_id],
+            |row| {
+                Ok(AccessCode {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    code: row.get(2)?,
+                    active: row.get::<_, i64>(3)? != 0,
+                })
+            },
+        );
+
         Template::render("index", context! {
             is_authenticated: true,
+            current_access_code: access_code_res.ok()
         })
         
     } else {

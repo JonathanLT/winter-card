@@ -8,12 +8,14 @@
     <h2>
         Bienvenue{% if current_access_code and current_access_code.name %}, {{ current_access_code.name }}{% endif %}
     </h2>
+    {% if current_access_code and current_access_code.id == 1 %}
     <a class="btn btn-outline-secondary" href="/admin">Admin</a>
+    {% endif %}
 </div>
 
 <div class="card">
     <div class="card-body">
-        {% if current_access_code %}
+        {% if current_access_code and current_access_code.id == 1 %}
         <p class="mb-1"><strong>ID :</strong> {{ current_access_code.id }}</p>
         <p class="mb-1"><strong>Nom :</strong> {{ current_access_code.name }}</p>
         <p class="mb-1"><strong>Actif :</strong> {% if current_access_code.active %}Oui{% else %}Non{% endif %}</p>

@@ -1,5 +1,6 @@
 use rocket::response::content::RawHtml;
 use rocket::serde::json::Json;
+use rocket::response::Redirect;
 use rocket::response::status::Created;
 use rocket::http::Status;
 use rocket::State;
@@ -37,10 +38,33 @@ pub fn admin_panel(_auth: AuthenticatedUser, state: &State<AppState>) -> Templat
         .unwrap()
         .as_ref()
         .map(|ac| ac.name.clone());
+    let conn: r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager> = state.db_pool.get().expect("db connection");
+    let user_id = state.current_access_code.lock().unwrap().as_ref().unwrap().id;
+    let access_code_res = conn.query_row(
+        "SELECT * FROM access_codes WHERE id = ?1 AND active = 1",
+        params![user_id],
+        |row| {
+            Ok(AccessCode {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                code: row.get(2)?,
+                active: row.get::<_, i64>(3)? != 0,
+            })
+        },
+    );
+
+    // Redirect to home if not admin
+    if user_id != 1 {
+        return Template::render("index", context! {
+            is_authenticated: true,
+            current_access_code: access_code_res.ok()
+        });
+    }
 
     Template::render("admin", context! {
         is_authenticated: true,
-        current_access_code_name: current_access_name
+        current_access_code_name: current_access_name,
+        current_access_code: access_code_res.ok()
     })
 }
 
