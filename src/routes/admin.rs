@@ -193,8 +193,12 @@ pub fn update_access_code(
 
 #[delete("/admin/api/codes/<id>")]
 pub fn delete_access_code(_auth: AuthenticatedUser, id: i64, state: &State<AppState>) -> Result<Status, Status> {
-    let conn = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
-    let rows_affected = conn.execute(
+    let conn: r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager> = state.db_pool.get().map_err(|_| Status::InternalServerError)?;
+    conn.execute(
+        "DELETE FROM draws WHERE giver_id = ?1",
+        params![id],
+    ).map_err(|_| Status::InternalServerError)?;
+    let rows_affected: usize = conn.execute(
         "DELETE FROM access_codes WHERE id = ?1",
         params![id],
     ).map_err(|_| Status::InternalServerError)?;
